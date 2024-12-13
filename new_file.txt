@@ -1,0 +1,73 @@
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.neighbors import NearestNeighbors
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+from flask import Flask, request, jsonify
+import re
+
+# Sample dataset
+data = {
+    'id': [1, 2, 3, 4, 5],
+    'title': ['AI in Healthcare', 'Machine Learning Basics', 'Deep Learning Techniques', 'NLP in Practice', 'AI and Ethics'],
+    'content': [
+        'Content about AI in healthcare, including applications and advancements.',
+        'An introduction to the basics of Machine Learning, covering key concepts and algorithms.',
+        'Details on various deep learning techniques and their implementations.',
+        'Practical applications of Natural Language Processing in various industries.',
+        'Exploring the ethical implications of AI and its impact on society.'
+    ]
+}
+
+df = pd.DataFrame(data)
+
+# Basic preprocessing
+def preprocess_text(text):
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', '', text)
+    return text
+
+df['content'] = df['content'].apply(preprocess_text)
+
+# TF-IDF Vectorizer
+vectorizer = TfidfVectorizer()
+X = vectorizer.fit_transform(df['content'])
+
+# Fit k-NN model
+knn = NearestNeighbors(n_neighbors=5, metric='cosine')
+knn.fit(X)
+
+# Load pre-trained BERT model
+model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+embeddings = model.encode(df['content'])
+
+# k-NN Search Function
+def search_knn(query, vectorizer, knn, df):
+    query_vec = vectorizer.transform([preprocess_text(query)])
+    distances, indices = knn.kneighbors(query_vec)
+    results = df.iloc[indices[0]]
+    return results
+
+# BERT Search Function
+def search_bert(query, model, embeddings, df):
+    query_embedding = model.encode([query])
+    distances = cosine_similarity(query_embedding, embeddings)
+    indices = distances.argsort()[0, -5:][::-1]
+    results = df.iloc[indices]
+    return results
+
+# Flask app
+app = Flask(__name__)
+
+@app.route('/search', methods=['GET'])
+def search():
+    query = request.args.get('query')
+    method = request.args.get('method', 'bert')
+    if method == 'knn':
+        results = search_knn(query, vectorizer, knn, df)
+    else:
+        results = search_bert(query, model, embeddings, df)
+    return jsonify(results.to_dict(orient='records'))
+
+if __name__ == '__main__':
+    app.run(debug=True)
